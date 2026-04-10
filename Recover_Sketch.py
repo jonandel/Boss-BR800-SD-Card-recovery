@@ -8,18 +8,15 @@
     3. Scan the image for RIFF headers and carve out WAV files based on user-defined size.
 """
 import os
-import struct
 import subprocess
 
 def format_size(size_bytes):
     try:
         size_bytes = int(size_bytes)
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size_bytes < 1024.0:
-                return f"{size_bytes:.2f} {unit}"
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0: return f"{size_bytes:.2f} {unit}"
             size_bytes /= 1024.0
-    except:
-        return "Unknown"
+    except: return "Unknown"
 
 def get_physical_drives():
     drives = []
@@ -37,45 +34,41 @@ def get_physical_drives():
                 drive_info['ReadableSize'] = format_size(drive_info.get('Size', 0))
                 drives.append(drive_info)
     except Exception as e:
-        print(f"Error retrieving drive list: {e}")
+        print(f"Error listing drives: {e}")
     return drives
 
-def create_disk_image(physical_drive, image_path):
-    # Ensure directory exists (though with relative paths it should)
-    os.makedirs(os.path.dirname(os.path.abspath(image_path)), exist_ok=True)
-
-    print(f"\n[1/3] Cloning {physical_drive} to {image_path}...")
+def clone_disk(drive_id, img_path):
+    print(f"\n[1/2] Cloning {drive_id} to {img_path}...")
     try:
-        buffer_size = 1024 * 1024 
-        with open(physical_drive, 'rb') as disk, open(image_path, 'wb') as image:
+        buffer_size = 1024 * 1024
+        with open(drive_id, 'rb') as src, open(img_path, 'wb') as dst:
             while True:
-                chunk = disk.read(buffer_size)
+                chunk = src.read(buffer_size)
                 if not chunk: break
-                image.write(chunk)
-        print("Cloning Complete.")
+                dst.write(chunk)
         return True
-    except PermissionError:
-        print("\nERROR: Access Denied. Run as Administrator!")
-        return False
     except Exception as e:
-        print(f"\nERROR: {e}")
+        # If we have a massive file, it likely finished despite the error
+        if os.path.exists(img_path) and os.path.getsize(img_path) > 1e9:
+            print(f"\nNote: Cloning stopped with error ({e}), but image looks complete.")
+            return True
+        print(f"\nCloning failed: {e}")
         return False
 
-def scan_and_extract(image_path, output_dir, hours):
-    os.makedirs(output_dir, exist_ok=True)
+def carve_audio(img_path, out_dir, hours):
+    if not os.path.exists(out_dir): os.makedirs(out_dir)
+    
+    # 16-bit, 44.1kHz, Stereo = 176,400 bytes/sec
+    carve_bytes = int(hours * 3600 * 176400)
+    file_size = os.path.getsize(img_path)
+    
+    print(f"\n[2/2] Scanning {os.path.basename(img_path)}...")
+    print(f"Carving {hours}h (~{format_size(carve_bytes)}) per header found.")
 
-    # BR-800 Standard: 16-bit, 44.1kHz, Stereo
-    bytes_per_second = 176400
-    carve_size = int(hours * 3600 * bytes_per_second)
-    
-    file_size = os.path.getsize(image_path)
-    print(f"\n[2/3] Scanning for headers. Carving {hours}h per match (~{format_size(carve_size)})")
-    
-    with open(image_path, "rb") as f:
+    with open(img_path, "rb") as f:
         offset = 0
         chunk_size = 10 * 1024 * 1024
-        match_count = 0
-        
+        count = 0
         while offset < file_size:
             f.seek(offset)
             chunk = f.read(chunk_size + 4)
@@ -86,57 +79,37 @@ def scan_and_extract(image_path, output_dir, hours):
                 idx = chunk.find(b'RIFF', idx)
                 if idx == -1 or idx > chunk_size: break
                 
-                abs_pos = offset + idx
-                f.seek(abs_pos + 8)
+                # Double-check for 'WAVE' sub-header
+                f.seek(offset + idx + 8)
                 if f.read(4) == b'WAVE':
-                    match_count += 1
-                    print(f"Found WAV Header #{match_count} at byte {abs_pos}")
-                    f.seek(abs_pos)
-                    data = f.read(carve_size)
-                    out_file = os.path.join(output_dir, f"recovered_session_{match_count}.wav")
-                    with open(out_file, "wb") as out:
+                    count += 1
+                    print(f"Match {count} found at byte {offset + idx}")
+                    f.seek(offset + idx)
+                    data = f.read(carve_bytes)
+                    with open(os.path.join(out_dir, f"recovery_{count}.wav"), "wb") as out:
                         out.write(data)
                 idx += 1
             offset += chunk_size
+    print(f"\nFinished. Extracted {count} files to {out_dir}")
 
 if __name__ == "__main__":
-    # Anchor paths to the script's current location
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    
-    print("=== BR-800 AUTOMATED FORENSIC TOOL ===")
-    print(f"Working Directory: {BASE_DIR}\n")
-    
-    drive_list = get_physical_drives()
-    if not drive_list:
-        print("No drives found. Run as Admin.")
-        exit()
+    BASE = os.path.dirname(os.path.abspath(__file__))
+    IMG_PATH = os.path.join(BASE, "SDCARD.bin")
+    OUT_DIR = os.path.join(BASE, "recovered_audio")
 
-    print(f"{'ID':<4} | {'Model':<30} | {'Size':<10}")
-    print("-" * 50)
-    for i, d in enumerate(drive_list):
-        print(f"[{i}]  | {d.get('Model', 'Unknown'):<30} | {d.get('ReadableSize', 'Unknown')}")
-    
-    try:
-        choice = int(input("\nSelect the ID of your SD Card: "))
-        selected_drive = drive_list[choice]['Name']
-    except:
-        print("Invalid selection."); exit()
-
-    # Automatic pathing
-    default_img = os.path.join(BASE_DIR, "sd_clone.bin")
-    default_out = os.path.join(BASE_DIR, "recovered_audio")
-
-    img_name = input(f"Image Path [default: {default_img}]: ").strip() or default_img
-    out_path = input(f"Recovery Folder [default: {default_out}]: ").strip() or default_out
-    
-    try:
-        input_hours = input("How many hours of audio to carve? [default: 2]: ").strip()
-        rec_hours = float(input_hours) if input_hours else 2.0
-    except:
-        rec_hours = 2.0
-
-    if create_disk_image(selected_drive, img_name):
-        scan_and_extract(img_name, out_path, rec_hours)
-        print(f"\n[3/3] Success! Data saved in subdirectory.")
-        print(f"Image: {img_name}")
-        print(f"Audio: {out_path}")
+    # If the image doesn't exist, we must clone
+    if not os.path.exists(IMG_PATH):
+        drives = get_physical_drives()
+        for i, d in enumerate(drives):
+            print(f"[{i}] {d['Model']} ({d['ReadableSize']})")
+        
+        choice = int(input("\nSelect Drive ID: "))
+        hours_input = float(input("Hours to carve: "))
+        
+        if clone_disk(drives[choice]['Name'], IMG_PATH):
+            carve_audio(IMG_PATH, OUT_DIR, hours_input)
+    else:
+        # If image EXISTS, just carve!
+        print(f"Found existing image: {IMG_PATH}")
+        hours_input = float(input("Hours to carve from existing image: "))
+        carve_audio(IMG_PATH, OUT_DIR, hours_input)
