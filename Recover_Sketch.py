@@ -6,6 +6,11 @@
     1. List physical drives to identify the SD card.
     2. Create a bit-for-bit clone of the SD card to a local image file.
     3. Scan the image for RIFF headers and carve out WAV files based on user-defined size.
+
+    You can use a different method to make a BIN copy of the sectors on the SD Card - e.g. DMDE - just put it in the folder with the name "SDCARD.bin", and the code will skip to analysing it.
+    
+    Once files are found, these can be imported into Audacity and played to see if there is audio within them - you may find many are just 'fragments'.  
+    They can then be trimmed and exported...
 """
 import os
 import subprocess
