@@ -1,13 +1,6 @@
 """ Run this Python code in VS Code studio as admin
-    Specifically written for the Boss BR-800, this script will help you recover audio sessions from a potentially corrupted SD card.
-
-    This script will::
-    1. List physical drives to identify the SD card.
-    2. Create a bit-for-bit clone of the SD card to a local image file.
-    3. Scan the image for RIFF headers and carve out WAV files based on user-defined size.
-"""
-""" Run this Python code in VS Code studio as admin
-    Specifically written for the Boss BR-800, this script will help you recover audio sessions from a potentially corrupted SD card.
+    Specifically written for the Boss BR-800, this script will help you recover audio sessions recorded as Sketches from a potentially corrupted 
+    SD card, or simply when the unit fails to save the recording due to power loss during finishing
 
     This script will::
     1. List physical drives to identify the SD card.
